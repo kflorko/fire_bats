@@ -669,7 +669,7 @@ plot_mLACI2020_results <- ggplot() +
 
 
 # Plots
-## - Fig 2. Plot raw data
+## - Fig 2. raw data
 ```{r}
 
 bats2 <- bats %>% 
@@ -715,8 +715,48 @@ plot_baci
 dev.off()  
 ```
 
+## - Fig. 3 effect plots
 
-## - Fig. A2 Plot by year
+```{r}
+tiff("figures/fig3.tiff", units="in", width=9, height=6, res=500)
+plot_grid(plot_m40k2018_results, plot_mEPFULANO2018_results, plot_mLACI2018_results, plot_m40k2019_results, plot_mEPFULANO2019_results, plot_mLACI2019_results,
+plot_m40k2020_results, plot_mEPFULANO2020_results, plot_mLACI2020_results, ncol = 3)
+dev.off()
+```
+
+
+## - Fig. A1 description of sites
+```{r}
+
+bats2 <- bats %>%
+  group_by(SiteName)%>%
+  dplyr::summarize(meanbats = mean(totalbats),
+            NearestWaterFeature=NearestWaterFeature,
+            TownsiteDistance=TownsiteDistance,
+            Elevation=Elevation,
+            BurnUnburn.N=BurnUnburn.N)%>%
+  distinct()
+
+fig_S1 <- ggplot(bats2, aes(TownsiteDistance, Elevation)) +
+  xlab("Townsite distance (km)") + ylab("Elevation (m)") +
+  geom_point(aes(shape = NearestWaterFeature, size = meanbats, color = BurnUnburn.N), alpha = 0.9) + 
+  labs(shape = "Nearest water feature", size = "Approximate mean\npasses / night", colour = "Burn or unburn") + 
+  scale_size(breaks = c(50, 100, 250, 500, 750), labels = c("50", "100", "250", "500", "750")) + 
+  theme_ggeffects() +
+  geom_text_repel(aes(label = SiteName)) +
+  guides(color = guide_legend(override.aes = list(size = 4)),
+         size = guide_legend(override.aes = list(size = 2)),
+         shape = guide_legend(override.aes = list(size = 4))) 
+
+
+tiff("figures/figA1.tiff", units="in", width=8, height=5, res=300)
+fig_S1
+dev.off()
+
+```
+
+
+## - Fig. A2 count by year
 ```{r}
 #-------- prep data
 bats_plots <- bats22
@@ -818,44 +858,7 @@ dev.off()
 
 ```
 
-## - Fig. 3 effect plots
 
-```{r}
-tiff("figures/fig3.tiff", units="in", width=9, height=6, res=500)
-plot_grid(plot_m40k2018_results, plot_mEPFULANO2018_results, plot_mLACI2018_results, plot_m40k2019_results, plot_mEPFULANO2019_results, plot_mLACI2019_results,
-plot_m40k2020_results, plot_mEPFULANO2020_results, plot_mLACI2020_results, ncol = 3)
-dev.off()
-```
-
-## - Fig. A1 description of sites
-```{r}
-
-bats2 <- bats %>%
-  group_by(SiteName)%>%
-  dplyr::summarize(meanbats = mean(totalbats),
-            NearestWaterFeature=NearestWaterFeature,
-            TownsiteDistance=TownsiteDistance,
-            Elevation=Elevation,
-            BurnUnburn.N=BurnUnburn.N)%>%
-  distinct()
-
-fig_S1 <- ggplot(bats2, aes(TownsiteDistance, Elevation)) +
-  xlab("Townsite distance (km)") + ylab("Elevation (m)") +
-  geom_point(aes(shape = NearestWaterFeature, size = meanbats, color = BurnUnburn.N), alpha = 0.9) + 
-  labs(shape = "Nearest water feature", size = "Approximate mean\npasses / night", colour = "Burn or unburn") + 
-  scale_size(breaks = c(50, 100, 250, 500, 750), labels = c("50", "100", "250", "500", "750")) + 
-  theme_ggeffects() +
-  geom_text_repel(aes(label = SiteName)) +
-  guides(color = guide_legend(override.aes = list(size = 4)),
-         size = guide_legend(override.aes = list(size = 2)),
-         shape = guide_legend(override.aes = list(size = 4))) 
-
-
-tiff("figures/figA1.tiff", units="in", width=8, height=5, res=300)
-fig_S1
-dev.off()
-
-```
 
 # Session info
 ```{r}
