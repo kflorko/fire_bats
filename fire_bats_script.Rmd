@@ -1,0 +1,870 @@
+---
+title: "The effects of a severe wildfire on a bat community in the Canadian Rocky Mountains"
+author: "Katie Florko"
+date: "25/01/2024"
+output:
+  html_document:
+    toc: yes
+    toc_float: yes
+    toc_depth: 3
+    number_sections: yes
+    theme: united
+    highlight: tango
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Overview
+
+This document contains the code for the analyses associated with "*The effects of a severe wildfire on a bat community in the Canadian Rocky Mountains*". 
+
+# Introduction
+
+## Libraries
+
+```{r}
+library(tidyr)
+require(ggplot2) # this is for data viz
+require(tidyverse) # this is for data wrangling
+require(lubridate) # for formatting dates
+require(hms) # for formatting time
+require(car) # for plotting the results with Component+Residual and doing vif test
+require(effects) # for plotting the modelled effect of a covariate 
+require(MuMIn) # for model comparison
+require(lme4) # to run glmer
+require(gridExtra) #arranging plots
+require(cowplot) #arranging plots
+require(ggeffects) #for the glm prediction plots
+require(fastDummies) #for creating dummy variables (characters to numeric)
+require(ggrepel) # for labelling PCA plot
+library(dplyr)
+library(jtools)
+library(glmmTMB)
+library(tibble)
+```
+
+# Data wrangling
+## Load data
+
+```{r}
+#set working directory **ERIN** add your own line here, or go Session > Set Working Directory > Choose Directory, choose where your data files are, and then copy the line in your console into here
+setwd("~/Documents/R/elow_bats")
+
+bat <- read.csv("SpeciesConsolidated_FINAL_updated5.csv", header = TRUE)
+head(bat)
+
+```
+
+## Reformat data 
+```{r}
+bats <- bat %>%
+  mutate(Date = ymd(Date), # set date to be in a R recognized date format
+         BatSunset = as_hms(BatSunset), # set in a R recognized time format
+         BatSunrise = as_hms(BatSunrise)) %>%
+  tidyr::spread(key = SpeciesConsolidated, value = Count) %>% # puts each species as a column
+  mutate(totalbats = rowSums(dplyr::select(.,m30k:mMYEV)), # creates a sum column for all bats
+         HighF = m40kMyotis + mHighF + mLABO + mMYEV, #creates a sum for HighF
+         LowF = mEPFULANO +mLACI + mLowF) #creates a sum for LowF
+  
+```
+
+
+# GLMS
+
+## - Overdis function
+```{r}
+
+#add function to test for over dispersion in the glms
+overdisp_fun <- function(model) {
+    rdf <- df.residual(model)
+    rp <- residuals(model,type="pearson")
+    Pearson.chisq <- sum(rp^2)
+    prat <- Pearson.chisq/rdf
+    pval <- pchisq(Pearson.chisq, df=rdf, lower.tail=FALSE)
+    c(chisq=Pearson.chisq,ratio=prat,rdf=rdf,p=pval)
+}
+
+```
+
+## - Prep data
+```{r}
+# add count of site visits
+sitevis <- bats %>%
+  group_by(SiteName)%>%
+  summarise(visits.n = n())
+
+# merge site visits and format
+bats22 <- bats %>%
+  mutate(Date = as.Date(Date, format = "%Y-%m-%d")) %>%
+  as_tibble() %>%
+  # create BACI columns
+  mutate(BA = case_when(PrePost == "Pre" ~ "before",
+                        PrePost == "Post" ~ "after"),
+         CI = case_when(BurnUnburn.N == "Unburn" ~ "control",
+                        BurnUnburn.N == "Burn" ~ "impact")) %>%
+  left_join(sitevis, by = c("SiteName" = "SiteName")) %>%
+  mutate(ForestType = as.factor(ForestType), #factors for categorical data
+         HabitatType = as.factor(HabitatType),
+         NearestWaterFeature = factor(NearestWaterFeature, 
+                                      levels=c("Creek","Wetland","Lake", "River")),
+         SiteName = as.factor(SiteName),
+         totalbats = as.integer(totalbats)) %>%
+  mutate(NightSumPrecipp = scale(NightSumPrecip),
+         SunsetTempp = scale(SunsetTemp),
+         DayOfYearr = scale(DayOfYear))
+
+# set baselines
+bats22$BA <- factor(bats22$BA, levels = c("before", "after"))
+bats22$CI <- factor(bats22$CI, levels = c("control", "impact"))
+
+
+# see counts
+## Year 1 post-fire
+bats22_2018 <- bats22 %>%
+  filter(Year < 2019)
+table(bats22_2018$Year)
+
+
+## Year 2 post-fire
+bats22_2019 <- bats22 %>%
+  filter(Year != 2018 &
+           Year != 2020)
+table(bats22_2019$Year)
+
+## Year 2 post-fire
+bats22_2020 <- bats22 %>%
+  filter(Year != 2018 &
+           Year != 2019)
+table(bats22_2020$Year)
+
+```
+
+
+## - Fit models
+### -- m40kMyotis
+```{r}
+mod.40k <- glmer.nb(m40kMyotis ~ BA*CI + 
+                          NightSumPrecipp + 
+                          SunsetTempp +
+                          DayOfYearr + # didn't turn out to be important
+                          (1|SiteName),
+                 data = bats22, # the data with scaled variables
+                 na.action = "na.fail") 
+
+# see model summary
+summary(mod.40k) 
+
+# see model R2
+performance::r2(mod.40k) # site explains a lot of the variability
+
+
+## checking diagnostics
+# check residuals:
+qqnorm(resid(mod.40k)) #
+qqline(resid(mod.40k)) # looks good
+
+
+#check singularity:
+tt <- getME(mod.40k,"theta")
+ll <- getME(mod.40k,"lower")
+min(tt[ll==0]) # should be larger tha 0.05 - looks good
+
+# check dispersion
+overdisp_fun(mod.40k) #ratio should be between 0.1 and 5 to be okay
+
+# check covariance
+car::vif(mod.40k) # looking at GVIF (remove values >3); do one at a time
+
+# do model selection
+subset(MuMIn::dredge(mod.40k), delta < 4) # best-supported model includes BA*CI + NSP + SnT
+
+# refit best model
+mod.40k2  <- glmer.nb(m40kMyotis ~ BA*CI + 
+                          NightSumPrecipp +
+                          SunsetTempp + # didn't turn out to be important
+                          (1|SiteName),
+                 data = bats22, # the data with scaled variables
+                 na.action = "na.fail") 
+
+# summary
+summary(mod.40k2)
+performance::r2(mod.40k2) # site explains a lot of the variability
+
+
+# plots
+plot(ggeffects::ggpredict(mod.40k2, terms = c("NightSumPrecipp[all]")))
+plot(ggeffects::ggpredict(mod.40k2, terms = c("SunsetTempp[all]")))
+plot(ggeffects::ggpredict(mod.40k2, terms = c("BA", "CI")))
+
+
+##----- Year 1
+mod.40k2018  <- glmer.nb(m40kMyotis ~ BA*CI + NightSumPrecipp +SunsetTempp + 
+                         DayOfYearr + (1|SiteName),data = bats22_2018, 
+                         na.action = "na.fail") 
+subset(MuMIn::dredge(mod.40k2018), delta < 2) 
+
+# refit best model
+m40k2018_results <- summary(glmer.nb(m40kMyotis ~ BA*CI + NightSumPrecipp +
+                 (1|SiteName),data = bats22_2018, na.action = "na.fail"))$coef %>%
+  as.data.frame() %>%
+  rownames_to_column("Terms") %>%
+  as_tibble() %>%
+  mutate(Year = "2018", Species = "m40kMyotis")
+
+plotdat <- ggeffects::ggpredict(glmer.nb(m40kMyotis ~ BA*CI + NightSumPrecipp +
+                 (1|SiteName),data = bats22_2018, na.action = "na.fail"), 
+                 terms = c("BA", "CI"))
+
+plot_m40k2018_results <- ggplot() +
+  geom_errorbar(data = plotdat, aes(x = x, y = predicted, color = group, 
+                ymin = conf.low, ymax = conf.high), 
+                position=position_dodge(0.2), width = 0.2, size = 0.75) +
+  geom_point(data = plotdat, aes(x = x, y = predicted, color = group, shape =group),
+             position=position_dodge(0.2), size = 2) + 
+  geom_line(data = plotdat, aes(x = x, y = predicted, color = group, 
+            group = group), position=position_dodge(0.2), size = 0.75) +
+  scale_color_manual(values = c("forestgreen", "black")) +
+  scale_x_discrete(labels= c("Years before fire\n(2015-2017)", "Year 1 post-fire\n(2018)")) +
+  scale_shape_manual(values = c(16, 4), breaks=c("control","impact"))  +
+  theme_minimal() + theme(legend.position = "none",
+                          text = element_text(size=12)) +
+  annotate("segment", x=-Inf, xend=Inf, y=-Inf, yend=-Inf, size = 1) +
+  annotate("segment", x=-Inf, xend=-Inf, y=-Inf, yend=Inf, size = 1) +
+  ggtitle(NULL) + ylab(" ") + xlab("") + ylim(0,160)
+
+
+##----- Year 2
+mod.40k2019  <- glmer.nb(m40kMyotis ~ BA*CI + NightSumPrecipp +SunsetTempp + 
+                         DayOfYearr + (1|SiteName),data = bats22_2019, 
+                         na.action = "na.fail") 
+subset(MuMIn::dredge(mod.40k2019), delta < 2) 
+
+# refit best model
+m40k2019_results  <- summary(glmer.nb(m40kMyotis ~ NightSumPrecipp + (1|SiteName),
+                              data = bats22_2019, na.action = "na.fail")) $coef %>%
+  as.data.frame() %>%
+  rownames_to_column("Terms") %>%
+  as_tibble() %>%
+  mutate(Year = "2019", Species = "m40kMyotis")
+
+plot_m40k2019_results <- ggplot() +
+  geom_errorbar(data = plotdat, aes(x = x, y = predicted, color = group, 
+                ymin = conf.low, ymax = conf.high), 
+                position=position_dodge(0.2), 
+                width = 0.2, size = 0.75, alpha = 0) +
+  geom_point(data = plotdat, aes(x = x, y = predicted, color = group),
+             position=position_dodge(0.2), size = 2, alpha = 0) + 
+  geom_line(data = plotdat, aes(x = x, y = predicted, color = group, 
+            group = group), 
+            position=position_dodge(0.2), size = 0.75, alpha = 0) +
+  scale_color_manual(values = c("forestgreen", "black")) +
+  scale_x_discrete(labels= c("Years before fire\n(2015-2017)", "Year 2 post-fire\n(2019)")) +
+  theme_minimal() + theme(legend.position = "none",
+                          text = element_text(size=12)) +
+  annotate("segment", x=-Inf, xend=Inf, y=-Inf, yend=-Inf, size = 1) +
+  annotate("segment", x=-Inf, xend=-Inf, y=-Inf, yend=Inf, size = 1) +
+  ggtitle(NULL) + ylab(" ") + xlab("") + ylim(0,160)
+
+
+
+##----- Year 3
+mod.40k2020  <- glmer.nb(m40kMyotis ~ BA*CI + NightSumPrecipp +SunsetTempp + 
+                         DayOfYearr + (1|SiteName),data = bats22_2020, 
+                         na.action = "na.fail") 
+subset(MuMIn::dredge(mod.40k2020), delta < 2) 
+
+# refit best model
+m40k2020_results  <- summary(glmer.nb(m40kMyotis ~ BA*CI + DayOfYearr 
+                            + NightSumPrecipp + (1|SiteName),
+                            data = bats22_2020, na.action = "na.fail")) $coef %>%
+  as.data.frame() %>%
+  rownames_to_column("Terms") %>%
+  as_tibble() %>%
+  mutate(Year = "2020", Species = "m40kMyotis")
+
+plotdat <- ggeffects::ggpredict(glmer.nb(m40kMyotis ~ BA*CI + 
+                                           DayOfYearr + NightSumPrecipp +
+                 (1|SiteName),data = bats22_2020, na.action = "na.fail"), 
+                 terms = c("BA", "CI"))
+
+plot_m40k2020_results <- ggplot() +
+  geom_errorbar(data = plotdat, aes(x = x, y = predicted, color = group, 
+                ymin = conf.low, ymax = conf.high), 
+                position=position_dodge(0.2), width = 0.2, size = 0.75) +
+  geom_point(data = plotdat, aes(x = x, y = predicted, color = group, shape = group),
+             position=position_dodge(0.2), size = 2) + 
+  geom_line(data = plotdat, aes(x = x, y = predicted, color = group, 
+            group = group), position=position_dodge(0.2), size = 0.75) +
+  scale_color_manual(values = c("forestgreen", "black")) +
+  scale_x_discrete(labels= c("Years before fire\n(2015-2017)", "Year 3 post-fire\n(2020)")) +
+  scale_shape_manual(values = c(16, 4), breaks=c("control","impact"))  +
+  theme_minimal() + theme(legend.position = "none",
+                          text = element_text(size=12)) +
+  annotate("segment", x=-Inf, xend=Inf, y=-Inf, yend=-Inf, size = 1) +
+  annotate("segment", x=-Inf, xend=-Inf, y=-Inf, yend=Inf, size = 1) +
+  ggtitle(NULL) + ylab(" ") + xlab("") + ylim(0,160)
+
+
+```
+
+
+### -- mEPFULANO
+```{r}
+mod.mEPFULANO <- glmer.nb(mEPFULANO ~ BA*CI + 
+                          NightSumPrecipp + # didn't turn out to be important
+                          SunsetTempp +
+                          DayOfYearr + 
+                          (1|SiteName),
+                 data = bats22, # the data with scaled variables
+                 na.action = "na.fail") 
+
+# see model summary
+summary(mod.mEPFULANO) 
+
+# see model R2
+performance::r2(mod.mEPFULANO) # site explains a lot of the variability
+
+
+## checking diagnostics
+# check residuals:
+qqnorm(resid(mod.mEPFULANO)) #
+qqline(resid(mod.mEPFULANO)) # looks good
+
+
+#check singularity:
+tt <- getME(mod.mEPFULANO,"theta")
+ll <- getME(mod.mEPFULANO,"lower")
+min(tt[ll==0]) # should be larger than 0.05 - looks good
+
+# check dispersion
+overdisp_fun(mod.mEPFULANO) #ratio should be between 0.1 and 5 to be okay
+
+# check covariance
+car::vif(mod.mEPFULANO) # looking at GVIF (remove values >3); do one at a time
+
+# do model selection
+subset(MuMIn::dredge(mod.mEPFULANO), delta < 4) # best-supported model includes BA*CI + DOY + SnT
+
+
+# plot
+plot(ggeffects::ggpredict(mod.mEPFULANO, terms = c("BA[all]", "CI")))
+
+
+# refit best model
+mod.mEPFULANO2  <- glmer.nb(mEPFULANO ~ BA*CI + 
+                          DayOfYearr +
+                          SunsetTempp + # didn't turn out to be important
+                          (1|SiteName),
+                 data = bats22, # the data with scaled variables
+                 na.action = "na.fail") 
+
+# summary
+summary(mod.mEPFULANO2)
+performance::r2(mod.mEPFULANO2)
+
+# plots
+plot(ggeffects::ggpredict(mod.mEPFULANO2, terms = c("DayOfYearr[all]")))
+plot(ggeffects::ggpredict(mod.mEPFULANO2, terms = c("SunsetTempp[all]")))
+plot(ggeffects::ggpredict(mod.mEPFULANO2, terms = c("BA", "CI")))
+
+
+##----- Year 1
+mEPFULANO2018  <- glmer.nb(mEPFULANO ~ BA*CI + NightSumPrecipp +SunsetTempp + 
+                         DayOfYearr + (1|SiteName),data = bats22_2018, 
+                         na.action = "na.fail") 
+subset(MuMIn::dredge(mEPFULANO2018), delta < 2) 
+
+# refit best model
+mEPFULANO2018_results <- summary(glmer.nb(mEPFULANO ~ 
+                 BA*CI +DayOfYearr + SunsetTempp +
+                 (1|SiteName), data = bats22_2018, na.action = "na.fail"))$coef %>%
+  as.data.frame() %>%
+  rownames_to_column("Terms") %>%
+  as_tibble() %>%
+  mutate(Year = "2018", Species = "mEPFULANO")
+
+plotdat <- ggeffects::ggpredict(glmer.nb(mEPFULANO ~ BA*CI + 
+                                           DayOfYearr + SunsetTempp +
+                 (1|SiteName),data = bats22_2018, na.action = "na.fail"), 
+                 terms = c("BA", "CI"))
+
+plot_mEPFULANO2018_results <- ggplot() +
+  geom_errorbar(data = plotdat, aes(x = x, y = predicted, color = group, 
+                ymin = conf.low, ymax = conf.high), 
+                position=position_dodge(0.2), width = 0.2, size = 0.75) +
+  geom_point(data = plotdat, aes(x = x, y = predicted, color = group, shape = group),
+             position=position_dodge(0.2), size = 2) + 
+  geom_line(data = plotdat, aes(x = x, y = predicted, color = group, 
+            group = group), position=position_dodge(0.2), size = 0.75) +
+  scale_color_manual(values = c("forestgreen", "black")) +
+  scale_x_discrete(labels= c("Years before fire\n(2015-2017)", "Year 1 post-fire\n(2018)")) +
+  scale_shape_manual(values = c(16, 4), breaks=c("control","impact"))  +
+  theme_minimal() + theme(legend.position = "none",
+                          text = element_text(size=12)) +
+  annotate("segment", x=-Inf, xend=Inf, y=-Inf, yend=-Inf, size = 1) +
+  annotate("segment", x=-Inf, xend=-Inf, y=-Inf, yend=Inf, size = 1) +
+  ggtitle(NULL) + ylab(" ") + xlab("") + ylim(0,50)
+
+
+
+
+##----- Year 2
+mEPFULANO2019  <- glmer.nb(mEPFULANO ~ BA*CI + NightSumPrecipp +SunsetTempp + 
+                         DayOfYearr + (1|SiteName),data = bats22_2019, 
+                         na.action = "na.fail") 
+subset(MuMIn::dredge(mEPFULANO2019), delta < 2) 
+
+# refit best model
+mEPFULANO2019_results  <- summary(glmer.nb(mEPFULANO ~ 
+                              BA + DayOfYearr + SunsetTempp + (1|SiteName),
+                              data = bats22_2019, na.action = "na.fail")) $coef %>%
+  as.data.frame() %>%
+  rownames_to_column("Terms") %>%
+  as_tibble() %>%
+  mutate(Year = "2019", Species = "mEPFULANO")
+
+
+plotdat <- ggeffects::ggpredict(glmer.nb(mEPFULANO ~ BA + 
+                                           DayOfYearr + SunsetTempp +
+                 (1|SiteName),data = bats22_2019, na.action = "na.fail"), 
+                 terms = c("BA"))
+
+plot_mEPFULANO2019_results <- ggplot() +
+  geom_errorbar(data = plotdat, aes(x = x, y = predicted,  
+                ymin = conf.low, ymax = conf.high), 
+                width = 0.2, size = 0.75, color = "grey70") +
+  geom_point(data = plotdat, aes(x = x, y = predicted), 
+             size = 2, color = "grey70") + 
+  geom_line(data = plotdat, aes(x = x, y = predicted, 
+            group = group), size = 0.75, color = "grey70") +
+  scale_x_discrete(labels= c("Years before fire\n(2015-2017)", "Year 2 post-fire\n(2019)")) +
+  theme_minimal() + theme(legend.position = "none",
+                          text = element_text(size=12)) +
+  annotate("segment", x=-Inf, xend=Inf, y=-Inf, yend=-Inf, size = 1) +
+  annotate("segment", x=-Inf, xend=-Inf, y=-Inf, yend=Inf, size = 1) +
+  ggtitle(NULL) + ylab(" ") + xlab("") + ylim(0,50)
+
+
+
+
+
+
+##----- Year 3
+mEPFULANO2020  <- glmer.nb(mEPFULANO ~ BA*CI + NightSumPrecipp +SunsetTempp + 
+                         DayOfYearr + (1|SiteName),data = bats22_2020, 
+                         na.action = "na.fail") 
+subset(MuMIn::dredge(mEPFULANO2020), delta < 2) 
+
+# refit best model
+mEPFULANO2020_results  <- summary(glmer.nb(mEPFULANO ~ BA + DayOfYearr 
+                            + SunsetTempp + (1|SiteName),
+                            data = bats22_2020, na.action = "na.fail")) $coef %>%
+  as.data.frame() %>%
+  rownames_to_column("Terms") %>%
+  as_tibble() %>%
+  mutate(Year = "2020", Species = "mEPFULANO")
+
+
+
+plotdat <- ggeffects::ggpredict(glmer.nb(mEPFULANO ~ BA + 
+                                           DayOfYearr + SunsetTempp +
+                 (1|SiteName),data = bats22_2020, na.action = "na.fail"), 
+                 terms = c("BA"))
+
+plot_mEPFULANO2020_results <- ggplot() +
+  geom_errorbar(data = plotdat, aes(x = x, y = predicted,  
+                ymin = conf.low, ymax = conf.high), 
+                width = 0.2, size = 0.75, color = "grey70") +
+  geom_point(data = plotdat, aes(x = x, y = predicted), 
+             size = 2, color = "grey70") + 
+  geom_line(data = plotdat, aes(x = x, y = predicted, 
+            group = group), size = 0.75, color = "grey70") +
+  scale_x_discrete(labels= c("Years before fire\n(2015-2017)", "Year 3 post-fire\n(2020)")) +
+  theme_minimal() + theme(legend.position = "none",
+                          text = element_text(size=12)) +
+  annotate("segment", x=-Inf, xend=Inf, y=-Inf, yend=-Inf, size = 1) +
+  annotate("segment", x=-Inf, xend=-Inf, y=-Inf, yend=Inf, size = 1) +
+  ggtitle(NULL) + ylab(" ") + xlab("") + ylim(0,50)
+
+
+
+```
+
+
+### -- mLACI
+```{r}
+mod.mLACI <- glmer.nb(mLACI ~ BA*CI + 
+                          NightSumPrecipp + 
+                          SunsetTempp +
+                          DayOfYearr + # didn't turn out to be important
+                          (1|SiteName),
+                 data = bats22, # the data with scaled variables
+                 na.action = "na.fail") 
+
+# see model summary
+summary(mod.mLACI) 
+
+# see model R2
+performance::r2(mod.mLACI) # site explains a lot of the variability
+
+
+
+
+## checking diagnostics
+# check residuals:
+qqnorm(resid(mod.mLACI)) #
+qqline(resid(mod.mLACI)) # looks good
+
+
+#check singularity:
+tt <- getME(mod.mLACI,"theta")
+ll <- getME(mod.mLACI,"lower")
+min(tt[ll==0]) # should be larger than 0.05 - looks good
+
+# check dispersion
+overdisp_fun(mod.mLACI) #ratio should be between 0.1 and 5 to be okay
+
+# check covariance
+car::vif(mod.mLACI) # looking at GVIF (remove values >3); do one at a time
+
+# do model selection
+subset(MuMIn::dredge(mod.mLACI), delta < 2) # best-supported model includes BA*CI + DOY + SnT
+
+# refit best model
+mod.mLACI2 <- glmer.nb(mLACI ~ BA + 
+                          SunsetTempp +
+                          DayOfYearr + # didn't turn out to be important
+                          (1|SiteName),
+                 data = bats22, # the data with scaled variables
+                 na.action = "na.fail") 
+
+# summary
+summary(mod.mLACI2)
+performance::r2(mod.mLACI2)
+
+
+# plots
+plot(ggeffects::ggpredict(mod.mLACI2, terms = c("SunsetTempp[all]")))
+plot(ggeffects::ggpredict(mod.mLACI2, terms = c("DayOfYearr[all]")))
+plot(ggeffects::ggpredict(mod.mLACI2, terms = c("BA")))
+
+
+##----- Year 1
+mLACI2018  <- glmer.nb(mLACI ~ BA*CI + NightSumPrecipp +SunsetTempp + 
+                         DayOfYearr + (1|SiteName),data = bats22_2018, 
+                         na.action = "na.fail") 
+subset(MuMIn::dredge(mLACI2018), delta < 2) 
+
+# refit best model
+mLACI2018_results <- summary(glmer.nb(mLACI ~ 
+                 BA*CI +DayOfYearr + SunsetTempp +
+                 (1|SiteName),data = bats22_2018, na.action = "na.fail"))$coef %>%
+  as.data.frame() %>%
+  rownames_to_column("Terms") %>%
+  as_tibble() %>%
+  mutate(Year = "2018", Species = "mLACI")
+
+
+plotdat <- ggeffects::ggpredict(glmer.nb(mLACI ~ 
+                 BA*CI +DayOfYearr + SunsetTempp +
+                 (1|SiteName), data = bats22_2018, na.action = "na.fail"), 
+                 terms = c("BA", "CI"))
+
+plot_mLACI2018_results <- ggplot() +
+  geom_errorbar(data = plotdat, aes(x = x, y = predicted, color = group, 
+                ymin = conf.low, ymax = conf.high), 
+                position=position_dodge(0.2), width = 0.2, size = 0.75) +
+  geom_point(data = plotdat, aes(x = x, y = predicted, color = group, shape = group),
+             position=position_dodge(0.2), size = 2) + 
+  geom_line(data = plotdat, aes(x = x, y = predicted, color = group, 
+            group = group), position=position_dodge(0.2), size = 0.75) +
+  scale_color_manual(values = c("forestgreen", "black")) +
+  scale_x_discrete(labels= c("Years before fire\n(2015-2017)", "Year 1 post-fire\n(2018)")) +
+  scale_shape_manual(values = c(16, 4), breaks=c("control","impact"))  +
+  theme_minimal() + theme(legend.position = "none",
+                          text = element_text(size=12)) +
+  annotate("segment", x=-Inf, xend=Inf, y=-Inf, yend=-Inf, size = 1) +
+  annotate("segment", x=-Inf, xend=-Inf, y=-Inf, yend=Inf, size = 1) +
+  ggtitle(NULL) + ylab(" ") + xlab("") + ylim(0,20)
+
+
+
+
+##----- Year 2
+mLACI2019  <- glmer.nb(mLACI ~ BA*CI + NightSumPrecipp +SunsetTempp + 
+                         DayOfYearr + (1|SiteName),data = bats22_2019, 
+                         na.action = "na.fail") 
+subset(MuMIn::dredge(mLACI2019), delta < 2) 
+
+# refit best model
+mLACI2019_results  <- summary(glmer.nb(mLACI ~ 
+                              BA + DayOfYearr + SunsetTempp + (1|SiteName),
+                              data = bats22_2019, na.action = "na.fail")) $coef %>%
+  as.data.frame() %>%
+  rownames_to_column("Terms") %>%
+  as_tibble() %>%
+  mutate(Year = "2019", Species = "mLACI")
+
+
+plotdat <- ggeffects::ggpredict(glmer.nb(mLACI ~ BA + 
+                                           DayOfYearr + SunsetTempp +
+                 (1|SiteName),data = bats22_2019, na.action = "na.fail"), 
+                 terms = c("BA"))
+
+plot_mLACI2019_results <- ggplot() +
+  geom_errorbar(data = plotdat, aes(x = x, y = predicted,  
+                ymin = conf.low, ymax = conf.high), 
+                width = 0.2, size = 0.75, color = "grey70") +
+  geom_point(data = plotdat, aes(x = x, y = predicted), 
+             size = 2, color = "grey70") + 
+  geom_line(data = plotdat, aes(x = x, y = predicted, 
+            group = group), size = 0.75, color = "grey70") +
+  scale_x_discrete(labels= c("Years before fire\n(2015-2017)", "Year 2 post-fire\n(2019)")) +
+  theme_minimal() + theme(legend.position = "none",
+                          text = element_text(size=12)) +
+  annotate("segment", x=-Inf, xend=Inf, y=-Inf, yend=-Inf, size = 1) +
+  annotate("segment", x=-Inf, xend=-Inf, y=-Inf, yend=Inf, size = 1) +
+  ggtitle(NULL) + ylab(" ") + xlab("") + ylim(0,20)
+
+
+
+
+
+##----- Year 3
+mLACI2020  <- glmer.nb(mLACI ~ BA*CI + NightSumPrecipp +SunsetTempp + 
+                         DayOfYearr + (1|SiteName),data = bats22_2020, 
+                         na.action = "na.fail") 
+subset(MuMIn::dredge(mLACI2020), delta < 2) 
+
+# refit best model
+mLACI2020_results  <- summary(glmer.nb(mLACI ~ BA + DayOfYearr + 
+                            SunsetTempp + (1|SiteName),
+                            data = bats22_2020, na.action = "na.fail")) $coef %>%
+  as.data.frame() %>%
+  rownames_to_column("Terms") %>%
+  as_tibble() %>%
+  mutate(Year = "2020", Species = "mLACI")
+
+plotdat <- ggeffects::ggpredict(glmer.nb(mLACI ~ BA + 
+                                           DayOfYearr + SunsetTempp +
+                 (1|SiteName),data = bats22_2020, na.action = "na.fail"), 
+                 terms = c("BA"))
+
+plot_mLACI2020_results <- ggplot() +
+  geom_errorbar(data = plotdat, aes(x = x, y = predicted,  
+                ymin = conf.low, ymax = conf.high), 
+                width = 0.2, size = 0.75, color = "grey70") +
+  geom_point(data = plotdat, aes(x = x, y = predicted), 
+             size = 2, color = "grey70") + 
+  geom_line(data = plotdat, aes(x = x, y = predicted, 
+            group = group), size = 0.75, color = "grey70") +
+  scale_x_discrete(labels= c("Years before fire\n(2015-2017)", "Year 3 post-fire\n(2020)")) +
+  theme_minimal() + theme(legend.position = "none",
+                          text = element_text(size=12)) +
+  annotate("segment", x=-Inf, xend=Inf, y=-Inf, yend=-Inf, size = 1) +
+  annotate("segment", x=-Inf, xend=-Inf, y=-Inf, yend=Inf, size = 1) +
+  ggtitle(NULL) + ylab(" ") + xlab("") + ylim(0,20)
+
+
+```
+
+
+# Plots
+## - 1. Plot raw data
+```{r}
+
+bats2 <- bats %>% 
+  as_tibble() %>%
+  # create BACI columns
+  mutate(BA = case_when(PrePost == "Pre" ~ "before",
+                        PrePost == "Post" ~ "after"),
+         CI = case_when(BurnUnburn.N == "Unburn" ~ "control",
+                        BurnUnburn.N == "Burn" ~ "impact")) %>%
+  pivot_longer(cols = c("m40kMyotis", "mEPFULANO", "mLACI"), names_to = "species", values_to = "count") %>%
+  group_by(BA, CI, species) %>%
+  summarise(meancount = mean(count),
+            sd = sd(count),
+            se = sd/sqrt(n()))
+
+bats2$BA <- factor(bats2$BA, levels=c("before", "after"))
+
+
+## plot!
+plot_baci <- ggplot(bats2) +
+  geom_point(aes(x = BA, y = meancount, color = CI, shape =CI), position=position_dodge(0.1)) +
+  geom_line(aes(x = BA, y = meancount, group = CI, color = CI), position=position_dodge(0.1)) +
+  geom_errorbar(aes(x = BA, ymin=meancount-se, ymax=meancount+se, group = CI, color = CI), width=.2, position=position_dodge(0.1)) +
+  facet_wrap(~species, labeller = as_labeller(c(`m40kMyotis` = "A. 40k Myotis",
+             
+                    `mEPFULANO` = "B. Big brown & silver-haired bats",
+                    `mLACI` = "C. Hoary bats")), ncol=3, scales = "free") +
+  scale_colour_manual(values = c("forestgreen", "black"), breaks=c("control","impact"), labels = c("Not burned", "Burned"), name = "Sites that after the\n2017 Kenow Wildfire were:") +
+  scale_shape_manual(values = c(16, 4), breaks=c("control","impact"), labels = c("Not burned", "Burned"), name = "Site status after the\n2017 Kenow Wildfire:") +
+  ylab("Mean number of passes per night") +
+  scale_x_discrete(labels= c("Before", "After")) +
+  xlab("Before and after the wildlfire") +
+  theme_minimal() +
+  theme(axis.text.y = element_text(size = 10, hjust=1), 
+        axis.text.x = element_text(size = 10),
+        legend.background = element_rect(fill="white", colour = "grey90"),
+        legend.text=element_text(size=10)) +
+  annotate("segment", x=-Inf, xend=Inf, y=-Inf, yend=-Inf, size = 1) +
+  annotate("segment", x=-Inf, xend=-Inf, y=-Inf, yend=Inf, size = 1)
+
+tiff("bats_baci.tiff", units="in", width=10, height=3.5, res=500)
+plot_baci
+dev.off()  
+```
+
+
+## - 2. by year
+```{r}
+#-------- prep data
+bats_plots <- bats22
+bats_plots$SiteName<- factor(bats_plots$SiteName, levels = c("Dipper at Rowe","Red Rock","Yarrow Cabin", "Wishbone","Blakiston Roadside","Boundary Bay", "Sofa Burn", "Sewage Lagoon","Bison Paddock", "Belly Bend", "Cameron Lake", "Lone Lake","Lost Lake"))
+bats_plots$BurnUnburn.N <- factor(bats_plots$BurnUnburn.N, levels = c("Burn", "Unburn"))
+
+
+bats_plots <- bats_plots %>%
+  mutate(Date = as.POSIXct(Date, format = "%Y-%m-%d"),
+    Year = year(Date)) %>%
+  pivot_longer(cols = c("m40kMyotis", "mEPFULANO", "mLACI"), names_to = "species", values_to = "count") %>%
+  group_by(species, Year, BurnUnburn.N) %>%
+  summarise(meancount = mean(count),
+            sd = sd(count),
+            se = sd/sqrt(n()))
+
+#-------- plot!
+plot_year <- ggplot(bats_plots, aes(Year, meancount)) +
+  #geom_rect(aes(xmin=2017.2,xmax=2020.5,ymin=-Inf,ymax=Inf), 
+            #fill = "grey90", alpha = 1, color = "grey90") +
+  #geom_vline(xintercept=2017.2, color = "red", size = 3) +
+  geom_point(aes(color = BurnUnburn.N, shape = BurnUnburn.N), size = 2) +
+  geom_errorbar(aes(x = Year, ymin=meancount-se, ymax=meancount+se, group = BurnUnburn.N, color = BurnUnburn.N), width=.15) +
+  geom_line(aes(color = BurnUnburn.N, group = BurnUnburn.N)) +
+  facet_wrap(species~., labeller = as_labeller(c(`m40kMyotis` = "A. 40k Myotis",
+                    `mEPFULANO` = "\nB. Big brown and silver-haired bats\n",
+                    `mLACI` = "\nC. Hoary bats\n")), scales = "free", ncol=1) +
+  scale_colour_manual(values = c("forestgreen", "black"), breaks=c("Unburn","Burn"), labels = c("Not burned", "Burned"), name = "Sites that after the\n2017 Kenow Wildfire were:") +
+  scale_shape_manual(values = c(16, 4), breaks=c("Unburn","Burn"), labels = c("Not burned", "Burned"), name = "Sites that after the\n2017 Kenow Wildfire were:") +
+  theme_minimal() +
+  guides(colour=guide_legend(title.position="top", 
+                                     title.hjust =0.5)) +
+  theme(strip.text = element_text(size = 12, hjust = 0),
+        legend.position = "bottom",
+        legend.background = element_rect(fill="white", colour = "grey90"),
+        legend.text=element_text(size=10),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.title.align=0.5,
+        legend.box.just = "center") +
+  annotate("segment", x=-Inf, xend=Inf, y=-Inf, yend=-Inf, size = 1) +
+  annotate("segment", x=-Inf, xend=-Inf, y=-Inf, yend=Inf, size = 1) +
+  labs(x="Year", y = "Mean number of bats detected per night") 
+
+ggsave(
+  plot = plot_year,
+  filename = "bats_year.png",
+  bg = "transparent",
+  units="in", width=4, height=9
+)
+
+```
+
+## - 3. coefficient plots
+```{r}
+level_order <- c('DayOfYearr', 'SunsetTempp', 'NightSumPrecipp', 'CIimpact', 'BAafter', "BAafter:CIimpact") 
+
+
+bats_coef <- rbind(m40k2018_results, m40k2019_results, m40k2020_results, 
+      mEPFULANO2018_results, mEPFULANO2019_results, mEPFULANO2020_results,
+      mLACI2018_results, mLACI2019_results, mLACI2020_results) %>%
+  rename("SE" = "Std. Error", 
+         "p" = "Pr(>|z|)") %>%
+  dplyr::select(-"z value") %>%
+  filter(Terms != "(Intercept)") %>%
+  mutate(Significant = case_when(p > 0.05 ~ "no",
+                                 p < 0.05 ~ "yes")) %>%
+  ggplot() +
+  geom_point(aes(x = Estimate, y = factor(Terms, level = level_order), 
+                 color = Year, shape = Year, alpha = Significant), position=position_dodge2(reverse = TRUE, 
+                                                         width = 0.5), size = 2) +
+  geom_errorbar(aes(xmin = Estimate-SE, xmax = Estimate+SE, y = Terms, 
+                    color = Year, alpha = Significant), width = 0.5, 
+                position=position_dodge2(reverse = TRUE, width = 0.9), size =0.75) +
+  scale_color_manual(values = c("#160A37", "#BF4F4A", "#F1B543"), name = "Year (years\nsince fire)", breaks = c(2018, 2019, 2020), labels = c("2018 (1)", "2019 (2)", "2020, (3)")) +
+  scale_shape_manual(values = c(15, 16, 17), name = "Year (years\nsince fire)", breaks = c(2018, 2019, 2020), labels = c("2018 (1)", "2019 (2)", "2020, (3)")) +
+  scale_y_discrete(labels=c("Ordinal date", "Temperature", "Precipitation", "Burned or not burned", "Before or after wildfire", "Burned/not : before/after")) +
+  scale_alpha_discrete(range = c(0.35, 0.9)) +
+  ylab("Coefficient") +
+  facet_grid(Year~Species, labeller = as_labeller(c(`m40kMyotis` = "A. m40k Myotis",
+                    `mEPFULANO` = "\nB. Big brown and silver-haired bats\n",
+                    `mLACI` = "\nC. Hoary bats\n",
+                    '2018' = "2018",
+                    '2019' = "2019",
+                    '2020' = "2020"))) +
+  theme_minimal() +
+  theme(strip.text = element_text(size = 12, hjust = 0),
+        legend.position = "right",
+        legend.background = element_rect(fill="white", colour = "grey90"),
+        legend.text=element_text(size=10),
+        legend.title.align=0.5,
+        legend.box.just = "center") +
+  geom_vline(xintercept = 0, linetype = 2, size = .25) +
+  annotate("segment", x=-Inf, xend=Inf, y=-Inf, yend=-Inf, size = 1) +
+  annotate("segment", x=-Inf, xend=-Inf, y=-Inf, yend=Inf, size = 1)
+
+
+tiff("bats_coef.tiff", units="in", width=11, height=6, res=500)
+bats_coef
+dev.off()  
+
+
+```
+
+## - 4. effect plots
+
+```{r}
+tiff("bats_effects.tiff", units="in", width=9, height=6, res=500)
+plot_grid(plot_m40k2018_results, plot_mEPFULANO2018_results, plot_mLACI2018_results, plot_m40k2019_results, plot_mEPFULANO2019_results, plot_mLACI2019_results,
+plot_m40k2020_results, plot_mEPFULANO2020_results, plot_mLACI2020_results, ncol = 3)
+dev.off()
+```
+
+##- 5. description of sites
+```{r}
+
+bats2 <- bats %>%
+  group_by(SiteName)%>%
+  dplyr::summarize(meanbats = mean(totalbats),
+            NearestWaterFeature=NearestWaterFeature,
+            TownsiteDistance=TownsiteDistance,
+            Elevation=Elevation,
+            BurnUnburn.N=BurnUnburn.N)%>%
+  distinct()
+
+fig_S1 <- ggplot(bats2, aes(TownsiteDistance, Elevation)) +
+  xlab("Townsite distance (km)") + ylab("Elevation (m)") +
+  geom_point(aes(shape = NearestWaterFeature, size = meanbats, color = BurnUnburn.N), alpha = 0.9) + 
+  labs(shape = "Nearest water feature", size = "Approximate mean\npasses / night", colour = "Burn or unburn") + 
+  scale_size(breaks = c(50, 100, 250, 500, 750), labels = c("50", "100", "250", "500", "750")) + 
+  theme_ggeffects() +
+  geom_text_repel(aes(label = SiteName)) +
+  guides(color = guide_legend(override.aes = list(size = 4)),
+         size = guide_legend(override.aes = list(size = 2)),
+         shape = guide_legend(override.aes = list(size = 4))) 
+
+
+tiff("fig_s1.tiff", units="in", width=8, height=5, res=300)
+fig_S1
+dev.off()
+
+```
+
+# Session info
+```{r}
+sessioninfo::session_info()
+```
+
