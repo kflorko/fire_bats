@@ -18,7 +18,7 @@ knitr::opts_chunk$set(echo = TRUE)
 
 # Overview
 
-This document contains the code for the analyses associated with "*The effects of a severe wildfire on a bat community in the Canadian Rocky Mountains*". 
+This document contains the code for the analyses associated with the paper "*The effects of a severe wildfire on a bat community in the Canadian Rocky Mountains*" by Erin Low, Katie Florko, Helena Mahoney, and Robert Barclay. 
 
 # Introduction
 
@@ -26,19 +26,20 @@ This document contains the code for the analyses associated with "*The effects o
 
 ```{r}
 library(tidyr)
-require(ggplot2) # this is for data viz
-require(tidyverse) # this is for data wrangling
-require(lubridate) # for formatting dates
-require(hms) # for formatting time
-require(car) # for plotting the results with Component+Residual and doing vif test
-require(effects) # for plotting the modelled effect of a covariate 
-require(MuMIn) # for model comparison
-require(lme4) # to run glmer
-require(gridExtra) #arranging plots
-require(cowplot) #arranging plots
-require(ggeffects) #for the glm prediction plots
-require(fastDummies) #for creating dummy variables (characters to numeric)
-require(ggrepel) # for labelling PCA plot
+library(ggplot2) # this is for data viz
+library(tidyverse) # this is for data wrangling
+library(lubridate) # for formatting dates
+library(hms) # for formatting time
+library(car) # for plotting the results with Component+Residual and doing vif test
+library(effects) # for plotting the modelled effect of a covariate 
+library(MuMIn) # for model comparison
+library(lme4) # to run glmer
+library(gridExtra) #arranging plots
+library(cowplot) #arranging plots
+library(ggeffects) #for the glm prediction plots
+library(fastDummies) #for creating dummy variables (characters to numeric)
+library(ggrepel) # for labelling PCA plot
+library(here) # loading/saving data
 library(dplyr)
 library(jtools)
 library(glmmTMB)
@@ -49,10 +50,9 @@ library(tibble)
 ## Load data
 
 ```{r}
-#set working directory **ERIN** add your own line here, or go Session > Set Working Directory > Choose Directory, choose where your data files are, and then copy the line in your console into here
-setwd("~/Documents/R/elow_bats")
 
-bat <- read.csv("SpeciesConsolidated_FINAL_updated5.csv", header = TRUE)
+# load bat data
+bat <- read.csv(here("data/SpeciesConsolidated_FINAL_updated5.csv"))
 head(bat)
 
 ```
@@ -62,12 +62,14 @@ head(bat)
 bats <- bat %>%
   mutate(Date = ymd(Date), # set date to be in a R recognized date format
          BatSunset = as_hms(BatSunset), # set in a R recognized time format
-         BatSunrise = as_hms(BatSunrise)) %>%
+         BatSunrise = as_hms(BatSunrise)) %>% # set in a R recognized time format
   tidyr::spread(key = SpeciesConsolidated, value = Count) %>% # puts each species as a column
   mutate(totalbats = rowSums(dplyr::select(.,m30k:mMYEV)), # creates a sum column for all bats
-         HighF = m40kMyotis + mHighF + mLABO + mMYEV, #creates a sum for HighF
-         LowF = mEPFULANO +mLACI + mLowF) #creates a sum for LowF
+         HighF = m40kMyotis + mHighF + mLABO + mMYEV, # creates a sum for HighF
+         LowF = mEPFULANO +mLACI + mLowF) %>% # creates a sum for LowF
+  as_tibble()
   
+head(bats)
 ```
 
 
@@ -98,7 +100,6 @@ sitevis <- bats %>%
 # merge site visits and format
 bats22 <- bats %>%
   mutate(Date = as.Date(Date, format = "%Y-%m-%d")) %>%
-  as_tibble() %>%
   # create BACI columns
   mutate(BA = case_when(PrePost == "Pre" ~ "before",
                         PrePost == "Post" ~ "after"),
@@ -111,7 +112,7 @@ bats22 <- bats %>%
                                       levels=c("Creek","Wetland","Lake", "River")),
          SiteName = as.factor(SiteName),
          totalbats = as.integer(totalbats)) %>%
-  mutate(NightSumPrecipp = scale(NightSumPrecip),
+  mutate(NightSumPrecipp = scale(NightSumPrecip), # scale data
          SunsetTempp = scale(SunsetTemp),
          DayOfYearr = scale(DayOfYear))
 
