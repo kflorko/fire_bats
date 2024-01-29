@@ -149,7 +149,7 @@ table(bats22_2020$Year)
 mod.40k <- glmer.nb(m40kMyotis ~ BA*CI + 
                           NightSumPrecipp + 
                           SunsetTempp +
-                          DayOfYearr + # didn't turn out to be important
+                          DayOfYearr + 
                           (1|SiteName),
                  data = bats22, # the data with scaled variables
                  na.action = "na.fail") 
@@ -164,7 +164,7 @@ performance::r2(mod.40k) # site explains a lot of the variability
 ## checking diagnostics
 # check residuals:
 qqnorm(resid(mod.40k)) #
-qqline(resid(mod.40k)) # looks good
+qqline(resid(mod.40k)) # not horrible
 
 
 #check singularity:
@@ -176,7 +176,7 @@ min(tt[ll==0]) # should be larger tha 0.05 - looks good
 overdisp_fun(mod.40k) #ratio should be between 0.1 and 5 to be okay
 
 # check covariance
-car::vif(mod.40k) # looking at GVIF (remove values >3); do one at a time
+car::vif(mod.40k) # looking at GVIF (remove values >3); do one at a time, looks good
 
 # do model selection
 subset(MuMIn::dredge(mod.40k), delta < 4) # best-supported model includes BA*CI + NSP + SnT
@@ -194,7 +194,7 @@ summary(mod.40k2)
 performance::r2(mod.40k2) # site explains a lot of the variability
 
 
-# plots
+# view effect plots
 plot(ggeffects::ggpredict(mod.40k2, terms = c("NightSumPrecipp[all]")))
 plot(ggeffects::ggpredict(mod.40k2, terms = c("SunsetTempp[all]")))
 plot(ggeffects::ggpredict(mod.40k2, terms = c("BA", "CI")))
@@ -202,7 +202,7 @@ plot(ggeffects::ggpredict(mod.40k2, terms = c("BA", "CI")))
 
 ##----- Year 1
 mod.40k2018  <- glmer.nb(m40kMyotis ~ BA*CI + NightSumPrecipp +SunsetTempp + 
-                         DayOfYearr + (1|SiteName),data = bats22_2018, 
+                         DayOfYearr + (1|SiteName), data = bats22_2018, 
                          na.action = "na.fail") 
 subset(MuMIn::dredge(mod.40k2018), delta < 2) 
 
@@ -225,7 +225,7 @@ plot_m40k2018_results <- ggplot() +
   geom_point(data = plotdat, aes(x = x, y = predicted, color = group, shape =group),
              position=position_dodge(0.2), size = 2) + 
   geom_line(data = plotdat, aes(x = x, y = predicted, color = group, 
-            group = group), position=position_dodge(0.2), size = 0.75) +
+            group = group), position=position_dodge(0.2), linewidth = 0.75) +
   scale_color_manual(values = c("forestgreen", "black")) +
   scale_x_discrete(labels= c("Years before fire\n(2015-2017)", "Year 1 post-fire\n(2018)")) +
   scale_shape_manual(values = c(16, 4), breaks=c("control","impact"))  +
@@ -330,8 +330,8 @@ performance::r2(mod.mEPFULANO) # site explains a lot of the variability
 
 ## checking diagnostics
 # check residuals:
-qqnorm(resid(mod.mEPFULANO)) #
-qqline(resid(mod.mEPFULANO)) # looks good
+qqnorm(resid(mod.mEPFULANO)) 
+qqline(resid(mod.mEPFULANO))
 
 
 #check singularity:
@@ -347,7 +347,7 @@ car::vif(mod.mEPFULANO) # looking at GVIF (remove values >3); do one at a time
 
 # do model selection
 subset(MuMIn::dredge(mod.mEPFULANO), delta < 4) # best-supported model includes BA*CI + DOY + SnT
-
+# note convergence issues
 
 # plot
 plot(ggeffects::ggpredict(mod.mEPFULANO, terms = c("BA[all]", "CI")))
@@ -359,7 +359,7 @@ mod.mEPFULANO2  <- glmer.nb(mEPFULANO ~ BA*CI +
                           SunsetTempp + # didn't turn out to be important
                           (1|SiteName),
                  data = bats22, # the data with scaled variables
-                 na.action = "na.fail") 
+                 na.action = "na.fail") # note no convergence issues
 
 # summary
 summary(mod.mEPFULANO2)
@@ -488,8 +488,6 @@ plot_mEPFULANO2020_results <- ggplot() +
   annotate("segment", x=-Inf, xend=Inf, y=-Inf, yend=-Inf, size = 1) +
   annotate("segment", x=-Inf, xend=-Inf, y=-Inf, yend=Inf, size = 1) +
   ggtitle(NULL) + ylab(" ") + xlab("") + ylim(0,50)
-
-
 
 ```
 
