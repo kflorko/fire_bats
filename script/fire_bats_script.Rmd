@@ -768,7 +768,7 @@ dev.off()
 
 ```
 
-## - 3. coefficient plots
+## - Fig. A3 coefficient plots
 ```{r}
 level_order <- c('DayOfYearr', 'SunsetTempp', 'NightSumPrecipp', 'CIimpact', 'BAafter', "BAafter:CIimpact") 
 
@@ -816,19 +816,18 @@ tiff("figures/figA3.tiff", units="in", width=11, height=6, res=500)
 bats_coef
 dev.off()  
 
-
 ```
 
-## - 4. effect plots
+## - Fig. 3 effect plots
 
 ```{r}
-tiff("bats_effects.tiff", units="in", width=9, height=6, res=500)
+tiff("figures/fig3.tiff", units="in", width=9, height=6, res=500)
 plot_grid(plot_m40k2018_results, plot_mEPFULANO2018_results, plot_mLACI2018_results, plot_m40k2019_results, plot_mEPFULANO2019_results, plot_mLACI2019_results,
 plot_m40k2020_results, plot_mEPFULANO2020_results, plot_mLACI2020_results, ncol = 3)
 dev.off()
 ```
 
-##- 5. description of sites
+## - Fig. A1 description of sites
 ```{r}
 
 bats2 <- bats %>%
@@ -852,7 +851,7 @@ fig_S1 <- ggplot(bats2, aes(TownsiteDistance, Elevation)) +
          shape = guide_legend(override.aes = list(size = 4))) 
 
 
-tiff("fig_s1.tiff", units="in", width=8, height=5, res=300)
+tiff("figures/figA1.tiff", units="in", width=8, height=5, res=300)
 fig_S1
 dev.off()
 
