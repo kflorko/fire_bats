@@ -669,7 +669,7 @@ plot_mLACI2020_results <- ggplot() +
 
 
 # Plots
-## - 1. Plot raw data
+## - Fig 2. Plot raw data
 ```{r}
 
 bats2 <- bats %>% 
@@ -710,13 +710,13 @@ plot_baci <- ggplot(bats2) +
   annotate("segment", x=-Inf, xend=Inf, y=-Inf, yend=-Inf, size = 1) +
   annotate("segment", x=-Inf, xend=-Inf, y=-Inf, yend=Inf, size = 1)
 
-tiff("bats_baci.tiff", units="in", width=10, height=3.5, res=500)
+tiff("fig2.tiff", units="in", width=10, height=3.5, res=500)
 plot_baci
 dev.off()  
 ```
 
 
-## - 2. by year
+## - Fig. A2 Plot by year
 ```{r}
 #-------- prep data
 bats_plots <- bats22
@@ -761,12 +761,10 @@ plot_year <- ggplot(bats_plots, aes(Year, meancount)) +
   annotate("segment", x=-Inf, xend=-Inf, y=-Inf, yend=Inf, size = 1) +
   labs(x="Year", y = "Mean number of bats detected per night") 
 
-ggsave(
-  plot = plot_year,
-  filename = "bats_year.png",
-  bg = "transparent",
-  units="in", width=4, height=9
-)
+
+tiff("figA2.tiff", units="in", width=4, height=9, res=500)
+plot_year
+dev.off()  
 
 ```
 
