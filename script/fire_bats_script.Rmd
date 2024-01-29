@@ -506,15 +506,13 @@ mod.mLACI <- glmer.nb(mLACI ~ BA*CI +
 summary(mod.mLACI) 
 
 # see model R2
-performance::r2(mod.mLACI) # site explains a lot of the variability
-
-
+performance::r2(mod.mLACI) # lots of variability explained!
 
 
 ## checking diagnostics
 # check residuals:
-qqnorm(resid(mod.mLACI)) #
-qqline(resid(mod.mLACI)) # looks good
+qqnorm(resid(mod.mLACI)) 
+qqline(resid(mod.mLACI)) 
 
 
 #check singularity:
